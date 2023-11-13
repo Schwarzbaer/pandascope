@@ -1,6 +1,6 @@
 import enum
 
-from panda3d.core import Vec2
+#from panda3d.core import Vec2
 from panda3d.core import Vec3
 from direct.showbase.ShowBase import ShowBase
 
@@ -14,7 +14,8 @@ class CameraMode(enum.Enum):
 
 
 camera_mode = CameraMode.TURNTABLE
-turntable_camera_speed = Vec2(120.0, 45.0)
+turntable_camera_movement_speed = Vec3(120.0, 45.0, 5.0)
+turntable_camera_rotation_speed = Vec3(120.0, 120.0, 120.0)
 freeflight_camera_movement_speed = Vec3(10.0, 10.0, 10.0)
 freeflight_camera_rotation_speed = Vec3(120.0, 120.0, 120.0)
 
@@ -57,20 +58,29 @@ def maybe_quit(task):
 
 def update_turntable_camera():
     hid_state = base.device_listener.read_context('turntable_camera')
-    movement = Vec2(hid_state['movement'])
-    movement.componentwise_mult(turntable_camera_speed)
+
+    movement = Vec3(hid_state['movement'])
+    movement.componentwise_mult(turntable_camera_movement_speed)
     movement *= globalClock.dt
 
-    old_h = camera_gimbal.get_h()
-    delta_h = movement.x
-    new_h = old_h + delta_h
-    camera_gimbal.set_h(new_h)
+    camera_gimbal.set_h(camera_gimbal.get_h() + movement.x)
 
-    old_p = camera_gimbal.get_p()
-    delta_p = movement.y
-    new_p = old_p - delta_p
-    clipped_p = min(max(new_p, -89.9), 89.9)
-    camera_gimbal.set_p(clipped_p)
+    pitch = camera_gimbal.get_p() - movement.y
+    pitch = min(max(pitch, -89.9), 89.9)
+    camera_gimbal.set_p(pitch)
+
+    zoom = base.cam.get_y() + movement.z
+    zoom = min(0.1, zoom)
+    base.cam.set_y(zoom)
+
+    rotation = Vec3(hid_state['rotation'])
+    rotation.componentwise_mult(turntable_camera_rotation_speed)
+    rotation *= globalClock.dt
+
+    base.cam.set_hpr(base.cam.get_hpr() + rotation)
+
+    if hid_state['recenter']:
+        base.cam.look_at(0, 0, 0)
 
 
 def update_freeflight_camera():
