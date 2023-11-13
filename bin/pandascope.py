@@ -56,29 +56,46 @@ def maybe_quit(task):
     return task.cont
 
 
+def toggle_camera():
+    global camera_mode
+    if camera_mode == CameraMode.TURNTABLE:
+        base.cam.wrt_reparent_to(base.render)
+        camera_anchor.wrt_reparent_to(base.cam)
+        camera_mode = CameraMode.FREEFLIGHT
+    else:
+        camera_anchor.wrt_reparent_to(base.render)            
+        base.cam.wrt_reparent_to(camera_gimbal)
+        camera_mode = CameraMode.TURNTABLE
+
+
 def update_turntable_camera():
     hid_state = base.device_listener.read_context('turntable_camera')
+    if hid_state['contextual_freeflight']:
+        toggle_camera()
+        update_freeflight_camera()
+        toggle_camera()
+        return
 
     movement = Vec3(hid_state['movement'])
     movement.componentwise_mult(turntable_camera_movement_speed)
     movement *= globalClock.dt
-
+    
     camera_gimbal.set_h(camera_gimbal.get_h() + movement.x)
-
+    
     pitch = camera_gimbal.get_p() - movement.y
     pitch = min(max(pitch, -89.9), 89.9)
     camera_gimbal.set_p(pitch)
-
+    
     zoom = base.cam.get_y() + movement.z
     zoom = min(0.1, zoom)
     base.cam.set_y(zoom)
-
+    
     rotation = Vec3(hid_state['rotation'])
     rotation.componentwise_mult(turntable_camera_rotation_speed)
     rotation *= globalClock.dt
-
+    
     base.cam.set_hpr(base.cam.get_hpr() + rotation)
-
+    
     if hid_state['recenter']:
         base.cam.look_at(0, 0, 0)
 
@@ -99,18 +116,10 @@ def update_freeflight_camera():
 
 
 def camera_movement(task):
-    global camera_mode
     hid_state = base.device_listener.read_context('control')
 
     if hid_state['toggle_camera']:
-        if camera_mode == CameraMode.TURNTABLE:
-            base.cam.wrt_reparent_to(base.render)
-            camera_anchor.wrt_reparent_to(base.cam)
-            camera_mode = CameraMode.FREEFLIGHT
-        else:
-            camera_anchor.wrt_reparent_to(base.render)            
-            base.cam.wrt_reparent_to(camera_gimbal)
-            camera_mode = CameraMode.TURNTABLE
+        toggle_camera()
 
     if camera_mode == CameraMode.TURNTABLE:
         update_turntable_camera()
