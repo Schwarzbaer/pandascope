@@ -1,0 +1,2 @@
+panda3d>=1.10.13
+panda3d-keybindings>=0.3a1
