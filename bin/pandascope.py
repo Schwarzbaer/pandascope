@@ -8,12 +8,34 @@ from keybindings.device_listener import add_device_listener
 from keybindings.device_listener import SinglePlayerAssigner
 
 
+class CameraControl(enum.Enum):
+    MOVEMENT = 1
+    ROTATION = 2
+    TURNTABLE = 3
+
+
 class CameraMode(enum.Enum):
-    FREEFLIGHT = 1
-    TURNTABLE = 2
+    BASE = 1
+    MODIFIED = 2
 
 
-camera_mode = CameraMode.TURNTABLE
+class AnchorMode(enum.Enum):
+    RELATIVE_TO_CAMERA = 1
+    STATIC = 2
+
+
+camera_modes = {
+    CameraMode.BASE: set([
+        CameraControl.MOVEMENT,
+        CameraControl.ROTATION,
+        #AnchorMode.STATIC,
+        AnchorMode.RELATIVE_TO_CAMERA,
+    ]),
+    CameraMode.MODIFIED: set([
+        CameraControl.TURNTABLE,
+        AnchorMode.STATIC,
+    ]),
+}
 turntable_camera_movement_speed = Vec3(120.0, 45.0, 5.0)
 turntable_camera_rotation_speed = Vec3(120.0, 120.0, 120.0)
 freeflight_camera_movement_speed = Vec3(10.0, 10.0, 10.0)
@@ -38,15 +60,15 @@ def setup_scene():
     # Specific setup; Modularize this away.
     m = base.loader.load_model('models/smiley')
     m.reparent_to(base.render)
-    # import random
-    # for _ in range(1000):
-    #     m = base.loader.load_model('models/smiley')
-    #     m.reparent_to(base.render)
-    #     m.set_pos(
-    #         (random.random() * 2 - 1) * 500,
-    #         (random.random() * 2 - 1) * 500,
-    #         (random.random() * 2 - 1) * 500,
-    #     )
+    import random
+    for _ in range(1000):
+        m = base.loader.load_model('models/smiley')
+        m.reparent_to(base.render)
+        m.set_pos(
+            (random.random() * 2 - 1) * 500,
+            (random.random() * 2 - 1) * 500,
+            (random.random() * 2 - 1) * 500,
+        )
 
 
 def maybe_quit(task):
@@ -68,15 +90,43 @@ def toggle_camera():
         camera_mode = CameraMode.TURNTABLE
 
 
-def update_turntable_camera():
-    hid_state = base.device_listener.read_context('turntable_camera')
-    if hid_state['contextual_freeflight']:
-        toggle_camera()
-        update_freeflight_camera()
-        toggle_camera()
-        return
+def update_camera_movement(mode):
+    hid_state = base.device_listener.read_context('camera')
 
     movement = Vec3(hid_state['movement'])
+    movement.componentwise_mult(freeflight_camera_movement_speed)
+    movement *= globalClock.dt
+
+    if AnchorMode.STATIC in mode:
+        base.cam.set_pos(base.cam, movement)
+    else:  # AnchorMode.RELATIVE_TO_CAMERA
+        camera_anchor.set_pos(
+            camera_anchor,
+            camera_anchor.get_relative_vector(base.cam, movement),
+        )
+
+
+def update_camera_rotation(mode):
+    hid_state = base.device_listener.read_context('camera')
+
+    rotation = Vec3(hid_state['rotation'])
+    rotation.componentwise_mult(freeflight_camera_rotation_speed)
+    rotation *= globalClock.dt
+
+    if AnchorMode.STATIC in mode:
+        base.cam.set_hpr(base.cam, rotation)
+    else:  # AnchorMode.RELATIVE_TO_CAMERA
+        base.cam.wrt_reparent_to(base.render)
+        camera_anchor.wrt_reparent_to(base.cam)
+        base.cam.set_hpr(base.cam, rotation)
+        camera_anchor.wrt_reparent_to(base.render)
+        base.cam.wrt_reparent_to(camera_gimbal)
+
+
+def update_camera_turntable(mode):
+    hid_state = base.device_listener.read_context('camera')
+
+    movement = Vec3(hid_state['turntable'])
     movement.componentwise_mult(turntable_camera_movement_speed)
     movement *= globalClock.dt
     
@@ -89,43 +139,38 @@ def update_turntable_camera():
     zoom = base.cam.get_y() + movement.z
     zoom = min(0.1, zoom)
     base.cam.set_y(zoom)
-    
-    rotation = Vec3(hid_state['rotation'])
-    rotation.componentwise_mult(turntable_camera_rotation_speed)
-    rotation *= globalClock.dt
-    
-    base.cam.set_hpr(base.cam.get_hpr() + rotation)
-    
-    if hid_state['recenter']:
-        base.cam.look_at(0, 0, 0)
-
-
-def update_freeflight_camera():
-    hid_state = base.device_listener.read_context('freeflight_camera')
-
-    movement = Vec3(hid_state['movement'])
-    movement.componentwise_mult(freeflight_camera_movement_speed)
-    movement *= globalClock.dt
-
-    rotation = Vec3(hid_state['rotation'])
-    rotation.componentwise_mult(freeflight_camera_rotation_speed)
-    rotation *= globalClock.dt
-
-    base.cam.set_pos(base.cam, movement)
-    base.cam.set_hpr(base.cam, rotation)
 
 
 def camera_movement(task):
-    hid_state = base.device_listener.read_context('control')
+    hid_state = base.device_listener.read_context('camera')
 
-    if hid_state['toggle_camera']:
-        toggle_camera()
-
-    if camera_mode == CameraMode.TURNTABLE:
-        update_turntable_camera()
+    if hid_state['modify_camera_mode']:
+        mode = camera_modes[CameraMode.MODIFIED]
     else:
-        update_freeflight_camera()
+        mode = camera_modes[CameraMode.BASE]
+    
+    if CameraControl.MOVEMENT in mode:
+        update_camera_movement(mode)
+    if CameraControl.ROTATION in mode:
+        update_camera_rotation(mode)
+    if CameraControl.TURNTABLE in mode:
+        update_camera_turntable(mode)
 
+    if hid_state['rotate_camera_to_anchor']:
+        base.cam.look_at(camera_anchor)
+    if hid_state['rotate_anchor_to_camera']:
+        base.cam.wrt_reparent_to(base.render)
+        camera_anchor.set_hpr(base.cam, 0, 0, 0)
+        camera_gimbal.set_hpr(0, 0, 0)
+        base.cam.wrt_reparent_to(camera_gimbal)
+    if hid_state['snap_anchor_to_camera']:
+        base.cam.wrt_reparent_to(base.render)
+        camera_anchor.set_pos(base.cam, 0, 10, 0)
+        base.cam.wrt_reparent_to(camera_gimbal)
+    if hid_state['snap_camera_to_anchor']:
+        camera_gimbal.set_hpr(0, 0, 0)
+        base.cam.set_pos(0, -10, 0)
+        
     return task.cont
 
 
